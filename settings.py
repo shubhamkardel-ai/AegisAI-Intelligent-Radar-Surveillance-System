@@ -1,0 +1,25 @@
+# Window Settings
+WIDTH = 1000
+HEIGHT = 800
+FPS = 120
+
+# Radar Settings
+RADAR_RADIUS = 320
+SWEEP_SPEED = 1.5
+TARGET_COUNT = 5
+
+# Colors
+BLACK = (5, 5, 5)
+GREEN = (0, 255, 70)
+DARK_GREEN = (0, 60, 0)
+LIGHT_GREEN = (200, 255, 200)
+
+# HUD
+TITLE = "Radar Scanner"
+STATUS = "ONLINE"
+
+# Aircraft Colors
+FRIENDLY = (0, 255, 70)
+ENEMY = (255, 60, 60)
+CIVILIAN = (70, 170, 255)
+UNKNOWN = (255, 220, 0)
