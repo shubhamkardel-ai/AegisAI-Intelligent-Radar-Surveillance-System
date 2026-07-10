@@ -49,13 +49,29 @@ class Aircraft:
         if self.y <= 0 or self.y >= HEIGHT:
             self.vy *= -1
 
-        if len(self.trail) > 20:
+        if len(self.trail) > 35:
             self.trail.pop(0)
 
     def draw(self, screen):
 
-        # Draw aircraft trail
-        if self.trail:
+        # Draw radar history (ghost targets)
+        for i, point in enumerate(self.trail):
+
+            alpha = int(30 + (i / len(self.trail)) * 180)
+
+            ghost = pygame.Surface((10, 10), pygame.SRCALPHA)
+
+            pygame.draw.circle(
+                ghost,
+                (*self.color, alpha),
+                (5, 5),
+                3
+            )
+
+            screen.blit(
+                ghost,
+                (point[0] - 5, point[1] - 5)
+            )
             for i, point in enumerate(self.trail):
                 alpha = int(255 * (i + 1) / len(self.trail))
 
@@ -73,18 +89,64 @@ class Aircraft:
                     (point[0] - 3, point[1] - 3)
                 )
 
-        # Draw aircraft
-        pygame.draw.circle(
-            screen,
-            self.color,
-            (int(self.x), int(self.y)),
-            7
-        )
+        # Draw aircraft icon
+
+        if self.type == "Friendly":
+
+            pygame.draw.polygon(
+                screen,
+                self.color,
+                [
+                    (self.x, self.y - 8),
+                    (self.x - 6, self.y + 6),
+                    (self.x + 6, self.y + 6)
+                ]
+            )
+
+        elif self.type == "Enemy":
+
+            pygame.draw.polygon(
+                screen,
+                self.color,
+                [
+                    (self.x, self.y - 8),
+                    (self.x - 8, self.y),
+                    (self.x, self.y + 8),
+                    (self.x + 8, self.y)
+                ]
+            )
+
+        elif self.type == "Civilian":
+
+            pygame.draw.circle(
+                screen,
+                self.color,
+                (int(self.x), int(self.y)),
+                6
+            )
+
+        else:
+
+            pygame.draw.rect(
+                screen,
+                self.color,
+                (
+                    int(self.x) - 5,
+                    int(self.y) - 5,
+                    10,
+                    10
+                )
+            )
 
         arrow_length = 15
 
+        prediction_length = 60
+
         end_x = self.x + math.cos(math.radians(-self.heading)) * arrow_length
         end_y = self.y - math.sin(math.radians(-self.heading)) * arrow_length
+
+        future_x = self.x + self.vx * prediction_length
+        future_y = self.y + self.vy * prediction_length
 
         pygame.draw.line(
             screen,
@@ -92,6 +154,22 @@ class Aircraft:
             (int(self.x), int(self.y)),
             (int(end_x), int(end_y)),
             2
+        )
+
+        pygame.draw.line(
+            screen,
+            self.color,
+            (int(self.x), int(self.y)),
+            (int(future_x), int(future_y)),
+            1
+        )
+
+        pygame.draw.circle(
+            screen,
+            self.color,
+            (int(future_x), int(future_y)),
+            4,
+            1
         )
 
         font = pygame.font.SysFont("Consolas", 12)

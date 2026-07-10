@@ -2,6 +2,7 @@ import pygame
 import math
 import random
 import sound
+import time
 from settings import *
 from aircraft import Aircraft
 from radar import Radar
@@ -57,16 +58,51 @@ for _ in range(TARGET_COUNT):
 enemy_memory = [0] * len(enemies)
 
 locked_target = None
+auto_lock = True
+
+collision_warning = False
+collision_text = ""
 
 radar = Radar()
 hub = Hub(font, GREEN)
 effects = Effects()
+
+missiles = []
+missile_speed = 8
+explosion_active = False
+explosion_x = 0
+explosion_y = 0
+explosion_radius = 5
+
+kills = 0
+
+missile_ready = True
+reload_time = 3000      # milliseconds (3 seconds)
+last_fire_time = 0
 
 running = True
 
 while running:
 
     for event in pygame.event.get():
+
+        if event.type == pygame.KEYDOWN:
+
+            if event.key == pygame.K_SPACE:
+
+                current_ticks = pygame.time.get_ticks()
+
+                if locked_target and missile_ready:
+                    missiles.append({
+
+                        "x": CENTER[0],
+                        "y": CENTER[1],
+                        "target": locked_target
+
+                    })
+
+                    missile_ready = False
+                    last_fire_time = current_ticks
 
         if event.type == pygame.QUIT:
             running = False
@@ -86,7 +122,48 @@ while running:
     screen.fill(BLACK)
 
     for enemy in enemies:
+
+        if auto_lock:
+
+            nearest = None
+            nearest_distance = 999999
+
+            for aircraft in enemies:
+
+                if aircraft.type != "Enemy":
+                    continue
+
+                dx = aircraft.x - CENTER[0]
+                dy = aircraft.y - CENTER[1]
+
+                d = math.sqrt(dx * dx + dy * dy)
+
+                if d < nearest_distance:
+                    nearest_distance = d
+                    nearest = aircraft
+
+            locked_target = nearest
+
         enemy.update()
+
+        collision_warning = False
+        collision_text = ""
+
+        for i in range(len(enemies)):
+
+            for j in range(i + 1, len(enemies)):
+
+                dx = enemies[i].x - enemies[j].x
+                dy = enemies[i].y - enemies[j].y
+
+                distance = math.sqrt(dx * dx + dy * dy)
+
+                if distance < 40:
+                    collision_warning = True
+
+                    collision_text = (
+                        f"{enemies[i].id} <-> {enemies[j].id}"
+                    )
 
         if enemy.distance < 120:
             enemy.threat = "HIGH"
@@ -98,7 +175,27 @@ while running:
     effects.draw_scan_lines(screen)
 
     for r in range(80, RADIUS + 1, 80):
-        pygame.draw.circle(screen, DARK_GREEN, CENTER, r, 1)
+        pygame.draw.circle(
+            screen,
+            DARK_GREEN,
+            CENTER,
+            r,
+            1
+        )
+
+        range_text = small_font.render(
+            f"{r} KM",
+            True,
+            GREEN
+        )
+
+        screen.blit(
+            range_text,
+            (
+                CENTER[0] + 8,
+                CENTER[1] - r - 10
+            )
+        )
 
     pygame.draw.line(screen, DARK_GREEN, (CENTER[0], 0), (CENTER[0], HEIGHT))
     pygame.draw.line(
@@ -122,6 +219,20 @@ while running:
                 y - text.get_height() // 2
             )
         )
+
+    north = font.render(
+        "N",
+        True,
+        LIGHT_GREEN
+    )
+
+    screen.blit(
+        north,
+        (
+            CENTER[0] - 8,
+            CENTER[1] - RADIUS - 45
+        )
+    )
 
     for i in range(90):
 
@@ -159,9 +270,19 @@ while running:
         2
     )
 
-    effects.draw_glow(screen)
+    pygame.draw.circle(
+        screen,
+        LIGHT_GREEN,
+        CENTER,
+        5
+    )
 
     for i, enemy in enumerate(enemies):
+
+        distance = math.sqrt(
+            (enemy.x - CENTER[0]) ** 2 +
+            (enemy.y - CENTER[1]) ** 2
+        )
 
         x = enemy.x
         y = enemy.y
@@ -182,17 +303,11 @@ while running:
         if enemy_memory[i] > 0:
 
             if locked_target == enemy:
-                box_size = 24
-
-                pygame.draw.rect(
+                pygame.draw.circle(
                     screen,
                     RED,
-                    (
-                        int(enemy.x) - box_size // 2,
-                        int(enemy.y) - box_size // 2,
-                        box_size,
-                        box_size
-                    ),
+                    (int(enemy.x), int(enemy.y)),
+                    15,
                     2
                 )
 
@@ -207,18 +322,72 @@ while running:
                 14
             )
 
-            screen.blit(glow, (x - 20, y - 20))
+            if distance <= RADIUS:
+                screen.blit(glow, (x - 20, y - 20))
 
             if enemy_memory[i] % 2 == 0:
-                enemy.draw(screen)
+                if distance <= RADIUS:
+                    enemy.draw(screen)
+
+    for missile in missiles[:]:
+
+        target = missile["target"]
+
+        if target not in enemies:
+            missiles.remove(missile)
+            continue
+
+        dx = target.x - missile["x"]
+        dy = target.y - missile["y"]
+
+        distance = math.sqrt(dx * dx + dy * dy)
+
+        if distance > missile_speed:
+
+            missile["x"] += dx / distance * missile_speed
+            missile["y"] += dy / distance * missile_speed
+
+        else:
+
+            explosion_active = True
+
+            explosion_x = target.x
+            explosion_y = target.y
+
+            if target in enemies:
+                enemies.remove(target)
+                kills += 1
+
+            missiles.remove(missile)
+
+        pygame.draw.circle(
+            screen,
+            RED,
+            (int(missile["x"]), int(missile["y"])),
+            4
+        )
+    current_ticks = pygame.time.get_ticks()
+
+    if not missile_ready:
+
+        if current_ticks - last_fire_time >= reload_time:
+            missile_ready = True
 
     radar.update()
-
+    
     # Play sound once every full rotation
     if radar.angle == 0:
         sound.play_sweep()
 
     fps = int(clock.get_fps())
+    current_time = time.strftime("%H:%M:%S")
+
+    friendly_count = sum(1 for e in enemies if e.type == "Friendly")
+    enemy_count = sum(1 for e in enemies if e.type == "Enemy")
+    civilian_count = sum(1 for e in enemies if e.type == "Civilian")
+    unknown_count = sum(1 for e in enemies if e.type == "Unknown")
+
+    high_threat = sum(1 for e in enemies if e.threat == "HIGH")
 
     hub.draw(
         screen,
@@ -226,6 +395,48 @@ while running:
         len(enemies),
         radar.angle
     )
+
+    stats = [
+
+        "RADAR STATUS",
+
+        f"Friendly : {friendly_count}",
+        f"Enemy    : {enemy_count}",
+        f"Civilian : {civilian_count}",
+        f"Unknown  : {unknown_count}",
+
+        "",
+        f"Locked : {locked_target.id if locked_target else 'NONE'}",
+
+        "",
+        f"High Threat : {high_threat}",
+
+        "",
+        f"KILLS : {kills}",
+
+        "",
+        f"MISSILE : {'READY' if missile_ready else 'RELOADING'}",
+
+        "",
+        f"FPS : {fps}",
+
+        "Radar : ONLINE",
+
+        "",
+        f"TIME : {current_time}"
+    ]
+
+    for i, line in enumerate(stats):
+        text = small_font.render(
+            line,
+            True,
+            GREEN
+        )
+
+        screen.blit(
+            text,
+            (760, 430 + i * 22)
+        )
 
     # Target Information Panel
     if locked_target:
@@ -266,6 +477,44 @@ while running:
                 text,
                 (panel_x + 10, panel_y + 10 + i * 20)
             )
+
+    if collision_warning:
+        warning = font.render(
+            "COLLISION WARNING",
+            True,
+            RED
+        )
+
+        ids = small_font.render(
+            collision_text,
+            True,
+            RED
+        )
+
+        screen.blit(
+            warning,
+            (20, 20)
+        )
+
+        screen.blit(
+            ids,
+            (20, 50)
+        )
+
+    if explosion_active:
+
+        pygame.draw.circle(
+            screen,
+            (255, 120, 0),
+            (int(explosion_x), int(explosion_y)),
+            explosion_radius
+        )
+
+        explosion_radius += 2
+
+        if explosion_radius > 30:
+            explosion_active = False
+            explosion_radius = 5
 
     pygame.display.flip()
     clock.tick(FPS)
