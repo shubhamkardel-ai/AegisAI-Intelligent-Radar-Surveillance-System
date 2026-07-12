@@ -21,7 +21,14 @@ class Aircraft:
         self.prediction_time = 40
         self.altitude = 0
         self.distance = 0
+
+        # AI Attributes
         self.threat = "LOW"
+        self.threat_score = 0
+        self.intent = "UNKNOWN"
+        self.camera_object = None
+
+        # Flight trail
         self.trail = []
 
         if self.type == "Friendly":
@@ -54,40 +61,22 @@ class Aircraft:
 
     def draw(self, screen):
 
-        # Draw radar history (ghost targets)
         for i, point in enumerate(self.trail):
+            alpha = int(255 * (i + 1) / len(self.trail))
 
-            alpha = int(30 + (i / len(self.trail)) * 180)
-
-            ghost = pygame.Surface((10, 10), pygame.SRCALPHA)
+            trail_surface = pygame.Surface((6, 6), pygame.SRCALPHA)
 
             pygame.draw.circle(
-                ghost,
+                trail_surface,
                 (*self.color, alpha),
-                (5, 5),
-                3
+                (3, 3),
+                2
             )
 
             screen.blit(
-                ghost,
-                (point[0] - 5, point[1] - 5)
+                trail_surface,
+                (point[0] - 3, point[1] - 3)
             )
-            for i, point in enumerate(self.trail):
-                alpha = int(255 * (i + 1) / len(self.trail))
-
-                trail_surface = pygame.Surface((6, 6), pygame.SRCALPHA)
-
-                pygame.draw.circle(
-                    trail_surface,
-                    (*self.color, alpha),
-                    (3, 3),
-                    1
-                )
-
-                screen.blit(
-                    trail_surface,
-                    (point[0] - 3, point[1] - 3)
-                )
 
         # Draw aircraft icon
 
@@ -115,6 +104,15 @@ class Aircraft:
                     (self.x + 8, self.y)
                 ]
             )
+
+            if self.camera_object:
+                pygame.draw.circle(
+                    screen,
+                    (0, 255, 255),
+                    (int(self.x), int(self.y)),
+                    12,
+                    2
+                )
 
         elif self.type == "Civilian":
 
@@ -212,6 +210,23 @@ class Aircraft:
             altitude_text,
             (int(self.x) + 8, int(self.y) + 35)
         )
+
+        if self.camera_object:
+            ai_font = pygame.font.SysFont("Consolas", 11, bold=True)
+
+            ai_text = ai_font.render(
+                "AI VERIFIED",
+                True,
+                (0, 255, 255)
+            )
+
+            screen.blit(
+                ai_text,
+                (
+                    int(self.x) + 8,
+                    int(self.y) + 50
+                )
+            )
 
         screen.blit(
             speed_text,

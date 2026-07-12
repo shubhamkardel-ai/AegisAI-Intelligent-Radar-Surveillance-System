@@ -3,12 +3,16 @@ import math
 import random
 import sound
 import time
+import cv2
+from vision import Vision
 from settings import *
 from aircraft import Aircraft
 from radar import Radar
 from hub import Hub
 from effects import Effects
 from settings import WIDTH, HEIGHT, GREEN
+from ai.intent_ai import IntentAnalyzer
+from ai.fusion_ai import SensorFusion
 
 pygame.init()
 
@@ -20,7 +24,12 @@ font = pygame.font.SysFont("Consolas", 18)
 small_font = pygame.font.SysFont("Consolas", 14)
 
 CENTER = (WIDTH // 2, HEIGHT // 2)
+
 RADIUS = RADAR_RADIUS
+zoom = 1.0
+MIN_RADIUS = 180
+MAX_RADIUS = 420
+
 enemies = []
 
 for _ in range(TARGET_COUNT):
@@ -66,8 +75,14 @@ collision_text = ""
 radar = Radar()
 hub = Hub(font, GREEN)
 effects = Effects()
+vision = Vision()
+intent_ai = IntentAnalyzer()
+fusion_ai = SensorFusion()
 
 missiles = []
+smoke_particles = []
+explosion_particles = []
+ping_effects = []
 missile_speed = 8
 explosion_active = False
 explosion_x = 0
@@ -119,6 +134,25 @@ while running:
                 if dx * dx + dy * dy < 25 * 25:
                     locked_target = aircraft
 
+        if event.type == pygame.MOUSEWHEEL:
+
+            RADIUS += event.y * 10
+
+            if RADIUS < MIN_RADIUS:
+                RADIUS = MIN_RADIUS
+
+            if RADIUS > MAX_RADIUS:
+                RADIUS = MAX_RADIUS
+
+    vision.update()
+
+    frame = vision.frame
+
+    fusion_ai.fuse(
+        enemies,
+        vision.detections
+    )
+
     screen.fill(BLACK)
 
     for enemy in enemies:
@@ -146,6 +180,8 @@ while running:
 
         enemy.update()
 
+        enemy.intent = intent_ai.analyze(enemy)
+
         collision_warning = False
         collision_text = ""
 
@@ -165,12 +201,69 @@ while running:
                         f"{enemies[i].id} <-> {enemies[j].id}"
                     )
 
+        enemy.threat_score = 0
+
+        # Distance
         if enemy.distance < 120:
-            enemy.threat = "HIGH"
+            enemy.threat_score += 40
         elif enemy.distance < 220:
+            enemy.threat_score += 25
+        else:
+            enemy.threat_score += 10
+
+        # Aircraft Type
+        if enemy.type == "Enemy":
+            enemy.threat_score += 40
+        elif enemy.type == "Unknown":
+            enemy.threat_score += 20
+
+        # Speed
+        if enemy.speed > 2:
+            enemy.threat_score += 20
+
+        # Threat Level
+        if enemy.threat_score >= 80:
+            enemy.threat = "HIGH"
+        elif enemy.threat_score >= 50:
             enemy.threat = "MEDIUM"
         else:
             enemy.threat = "LOW"
+
+        # ==========================
+        # AI Intent Prediction
+        # ==========================
+
+        dx = CENTER[0] - enemy.x
+        dy = CENTER[1] - enemy.y
+
+        distance_to_center = math.sqrt(dx * dx + dy * dy)
+
+        future_x = enemy.x + enemy.vx * 50
+        future_y = enemy.y + enemy.vy * 50
+
+        future_distance = math.sqrt(
+            (CENTER[0] - future_x) ** 2 +
+            (CENTER[1] - future_y) ** 2
+        )
+
+        if future_distance < distance_to_center:
+
+            if enemy.type == "Enemy":
+                enemy.intent = "APPROACHING"
+
+            elif enemy.type == "Unknown":
+                enemy.intent = "SUSPICIOUS"
+
+            else:
+                enemy.intent = "MOVING IN"
+
+        else:
+
+            if enemy.speed <= 1:
+                enemy.intent = "PATROLLING"
+
+            else:
+                enemy.intent = "LEAVING AREA"
 
     effects.draw_scan_lines(screen)
 
@@ -233,6 +326,30 @@ while running:
             CENTER[1] - RADIUS - 45
         )
     )
+
+    # Compass Directions
+    compass_font = pygame.font.SysFont("Consolas", 20, bold=True)
+
+    directions = [
+        ("E", 0),
+        ("S", 90),
+        ("W", 180),
+        ("N", 270)
+    ]
+
+    for label, angle in directions:
+        x = CENTER[0] + math.cos(math.radians(angle)) * (RADIUS + 40)
+        y = CENTER[1] + math.sin(math.radians(angle)) * (RADIUS + 40)
+
+        txt = compass_font.render(label, True, LIGHT_GREEN)
+
+        screen.blit(
+            txt,
+            (
+                x - txt.get_width() // 2,
+                y - txt.get_height() // 2
+            )
+        )
 
     for i in range(90):
 
@@ -298,16 +415,58 @@ while running:
             if enemy_memory[i] == 0:
                 sound.play_beep()
 
+                ping_effects.append([
+                    enemy.x,
+                    enemy.y,
+                    5
+                ])
+
             enemy_memory[i] = 10
 
         if enemy_memory[i] > 0:
 
             if locked_target == enemy:
-                pygame.draw.circle(
+                pygame.draw.rect(
                     screen,
                     RED,
-                    (int(enemy.x), int(enemy.y)),
-                    15,
+                    (
+                        int(enemy.x) - 18,
+                        int(enemy.y) - 18,
+                        36,
+                        36
+                    ),
+                    2
+                )
+
+                pygame.draw.line(
+                    screen,
+                    RED,
+                    (enemy.x - 25, enemy.y),
+                    (enemy.x - 18, enemy.y),
+                    2
+                )
+
+                pygame.draw.line(
+                    screen,
+                    RED,
+                    (enemy.x + 18, enemy.y),
+                    (enemy.x + 25, enemy.y),
+                    2
+                )
+
+                pygame.draw.line(
+                    screen,
+                    RED,
+                    (enemy.x, enemy.y - 25),
+                    (enemy.x, enemy.y - 18),
+                    2
+                )
+
+                pygame.draw.line(
+                    screen,
+                    RED,
+                    (enemy.x, enemy.y + 18),
+                    (enemy.x, enemy.y + 25),
                     2
                 )
 
@@ -327,7 +486,13 @@ while running:
 
             if enemy_memory[i] % 2 == 0:
                 if distance <= RADIUS:
-                    enemy.draw(screen)
+                    if enemy.type == "Enemy":
+
+                        if pygame.time.get_ticks() % 600 < 300:
+                            enemy.draw(screen)
+
+                    else:
+                        enemy.draw(screen)
 
     for missile in missiles[:]:
 
@@ -347,6 +512,12 @@ while running:
             missile["x"] += dx / distance * missile_speed
             missile["y"] += dy / distance * missile_speed
 
+            smoke_particles.append([
+                missile["x"],
+                missile["y"],
+                random.randint(8, 12)
+            ])
+
         else:
 
             explosion_active = True
@@ -354,11 +525,32 @@ while running:
             explosion_x = target.x
             explosion_y = target.y
 
+            for _ in range(30):
+                explosion_particles.append({
+
+                    "x": target.x,
+                    "y": target.y,
+
+                    "vx": random.uniform(-4, 4),
+                    "vy": random.uniform(-4, 4),
+
+                    "life": 30
+
+                })
+
             if target in enemies:
                 enemies.remove(target)
                 kills += 1
 
             missiles.remove(missile)
+
+        pygame.draw.line(
+            screen,
+            (255, 120, 0),
+            CENTER,
+            (int(missile["x"]), int(missile["y"])),
+            1
+        )
 
         pygame.draw.circle(
             screen,
@@ -371,7 +563,44 @@ while running:
     if not missile_ready:
 
         if current_ticks - last_fire_time >= reload_time:
+
+
             missile_ready = True
+
+    for smoke in smoke_particles[:]:
+
+        color = random.choice([
+            (255, 220, 120),
+            (255, 180, 60),
+            (255, 120, 20)
+        ])
+
+        pygame.draw.circle(
+            screen,
+            color,
+            (int(smoke[0]), int(smoke[1])),
+            int(smoke[2])
+        )
+
+        smoke[2] -= 0.4
+
+        if smoke[2] <= 0:
+            smoke_particles.remove(smoke)
+
+    for ping in ping_effects[:]:
+
+        pygame.draw.circle(
+            screen,
+            LIGHT_GREEN,
+            (int(ping[0]), int(ping[1])),
+            int(ping[2]),
+            2
+        )
+
+        ping[2] += 2
+
+        if ping[2] > 25:
+            ping_effects.remove(ping)
 
     radar.update()
     
@@ -381,6 +610,14 @@ while running:
 
     fps = int(clock.get_fps())
     current_time = time.strftime("%H:%M:%S")
+
+    bearing = int(radar.angle) % 360
+
+    bearing_text = font.render(
+        f"BEARING : {bearing:03}°",
+        True,
+        LIGHT_GREEN
+    )
 
     friendly_count = sum(1 for e in enemies if e.type == "Friendly")
     enemy_count = sum(1 for e in enemies if e.type == "Enemy")
@@ -394,6 +631,11 @@ while running:
         fps,
         len(enemies),
         radar.angle
+    )
+
+    screen.blit(
+        bearing_text,
+        (20, HEIGHT - 35)
     )
 
     stats = [
@@ -416,6 +658,9 @@ while running:
 
         "",
         f"MISSILE : {'READY' if missile_ready else 'RELOADING'}",
+
+        "",
+        f"ZOOM : {RADIUS}px",
 
         "",
         f"FPS : {fps}",
@@ -456,26 +701,90 @@ while running:
         lines = [
             "TARGET INFORMATION",
             "",
-            f"ID   : {locked_target.id}",
-            f"TYPE : {locked_target.type}",
-            f"SPD  : {locked_target.speed}",
-            f"HDG  : {int(locked_target.heading)}°",
-            f"ALT  : {locked_target.altitude} FT",
-            f"DST  : {locked_target.distance} PX",
-            f"THREAT : {locked_target.threat}",
+            f"ID        : {locked_target.id}",
+            f"TYPE      : {locked_target.type}",
+            f"SPEED     : {locked_target.speed}",
+            f"HEADING   : {int(locked_target.heading)}°",
+            f"ALTITUDE  : {locked_target.altitude} FT",
+            f"DISTANCE  : {int(locked_target.distance)} PX",
+
+            "",
+
+            f"AI SCORE  : {locked_target.threat_score}",
+            f"AI INTENT : {locked_target.intent}",
+            f"THREAT    : {locked_target.threat}",
+
+            "",
+            f"CAMERA : {'YES' if locked_target.camera_object else 'NO'}",
+
+            "",
             "STATUS : TRACKED"
         ]
 
         for i, line in enumerate(lines):
+
+            color = GREEN
+
+            if "THREAT :" in line:
+
+                if locked_target.threat == "HIGH":
+                    color = RED
+
+                elif locked_target.threat == "MEDIUM":
+                    color = (255, 255, 0)
+
+                else:
+                    color = GREEN
+
             text = info_font.render(
                 line,
                 True,
-                GREEN
+                color
             )
 
             screen.blit(
                 text,
                 (panel_x + 10, panel_y + 10 + i * 20)
+            )
+
+            # ===============================
+            # AI Threat Meter
+            # ===============================
+
+            bar_x = panel_x + 10
+            bar_y = panel_y + 215
+
+            pygame.draw.rect(
+                screen,
+                DARK_GREEN,
+                (bar_x, bar_y, 200, 18),
+                2
+            )
+
+            fill_width = int((locked_target.threat_score / 100) * 200)
+
+            if locked_target.threat_score >= 80:
+                bar_color = RED
+            elif locked_target.threat_score >= 50:
+                bar_color = (255, 255, 0)
+            else:
+                bar_color = GREEN
+
+            pygame.draw.rect(
+                screen,
+                bar_color,
+                (bar_x, bar_y, fill_width, 18)
+            )
+
+            score_text = info_font.render(
+                f"AI THREAT : {locked_target.threat_score}%",
+                True,
+                bar_color
+            )
+
+            screen.blit(
+                score_text,
+                (bar_x, bar_y + 25)
             )
 
     if collision_warning:
@@ -503,6 +812,23 @@ while running:
 
     if explosion_active:
 
+        for particle in explosion_particles[:]:
+
+            particle["x"] += particle["vx"]
+            particle["y"] += particle["vy"]
+
+            particle["life"] -= 1
+
+            pygame.draw.circle(
+                screen,
+                (255, 180, 0),
+                (int(particle["x"]), int(particle["y"])),
+                3
+            )
+
+            if particle["life"] <= 0:
+                explosion_particles.remove(particle)
+
         pygame.draw.circle(
             screen,
             (255, 120, 0),
@@ -515,8 +841,17 @@ while running:
         if explosion_radius > 30:
             explosion_active = False
             explosion_radius = 5
+            explosion_particles.clear()
+
+    if frame is not None:
+
+        cv2.imshow("AegisAI Vision", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            running = False
 
     pygame.display.flip()
     clock.tick(FPS)
 
+vision.release()
 pygame.quit()
